@@ -1,0 +1,358 @@
+* Instructions
+
+Download this repo to some directory and =cd= into it. Run
+=setup.sh= to set up a virtualenv and download dependencies.
+
+Then run
+
+#+BEGIN_SRC shell
+python3 -m esportsapi.main app
+#+END_SRC
+
+to start the "app API" or
+
+#+BEGIN_SRC shell
+python3 -m esportsapi.main db
+#+END_SRC
+
+to start the "database API". This will start a Flask server
+on http://127.0.0.1:5000/ that takes GraphQL queries in the
+=query= URL query string argument and returns JSON.
+
+The app API can only fetch data. The database API can do
+everything that the app API can (because I saw no reason not
+to), but also insert new data and update data via GraphQL
+mutation queries.
+
+Right now every time the program is restarted it recreates
+the database (including some example data), for easier
+testing. So don't expect your data to be saved between runs.
+To disable this behavior comment out the lines:
+
+#+BEGIN_SRC graphql
+db.recreate_db()
+db.load_example_data()
+#+END_SRC
+
+in =esportsapi/main.py=.
+
+Here are some queries that you can try after you have
+started the service:
+
+#+BEGIN_SRC graphql
+{matches(tournamentName: "ASL Season 9") {
+    date
+    game
+    finished
+    tournament
+    team1Score
+    team2Score
+    teams {id name birthday fromNation team games}}}
+#+END_SRC
+
+Or as a URL: [[http://127.0.0.1:5000/?query=%7Bmatches%28tournamentName%3A%20%22ASL%20Season%209%22%29%20%7Bdate%20game%20finished%20tournament%20team1Score%20team2Score%20teams%20%7Bid%20name%20birthday%20fromNation%20team%20games%7D%7D%7D][ASL Season 9 matches]]
+
+#+BEGIN_SRC graphql
+{matches(between: ["1000-01-01", "2030-01-01"]) {
+    date
+    game
+    finished
+    tournament
+    team1Score
+    team2Score
+    teams {name fromNation team}}}
+#+END_SRC
+
+As URL: [[http://127.0.0.1:5000/?query=%7Bmatches%28between%3A%20%5B%221000-01-01%22%2C%20%222030-01-01%22%5D%29%20%7Bdate%20game%20finished%20tournament%20team1Score%20team2Score%20teams%20%7Bname%20fromNation%20team%7D%7D%7D][Matches between years 1000 and 2030]]
+
+#+BEGIN_SRC graphql
+mutation {
+  createMatch(
+    data: {
+      date: "2021-01-01T00:00:00",
+      gameId: 3,
+      finished: false,
+      team1Score: 0,
+      team2Score: 0,
+      teams: [[3, 4], [6, 7]]})
+  {
+    match {
+      id
+      game
+      date
+      finished
+      tournament
+      team1Score
+      team2Score
+      teams {name fromNation team games}}}}
+#+END_SRC
+
+As URL: [[http://127.0.0.1:5000/?query=mutation%20%7BcreateMatch%28%20data%3A%20%7Bdate%3A%20%222021-01-01T00%3A00%3A00%22%2C%20gameId%3A%203%2C%20finished%3A%20false%2C%20team1Score%3A%200%2C%20team2Score%3A%200%2C%20teams%3A%20%5B%5B3%2C%204%5D%2C%20%5B6%2C%207%5D%5D%7D%29%20%7Bmatch%20%7Bid%20game%20date%20finished%20tournament%20team1Score%20team2Score%20teams%20%7Bname%20fromNation%20team%20games%7D%7D%7D%7D][Create a match]]
+
+#+BEGIN_SRC graphql
+mutation {
+  updateMatch(
+    data: {
+      id: 4,
+      finished: true,
+      team1Score: 10,
+      team2Score: 0})
+  {
+    match {
+      game
+      date
+      finished
+      tournament
+      team1Score
+      team2Score
+      teams {name fromNation team}}}}
+#+END_SRC
+
+As URL: [[http://127.0.0.1:5000/?query=mutation%20%7BupdateMatch%28%20data%3A%20%7Bid%3A%204%2C%20finished%3A%20true%2C%20team1Score%3A%2010%2C%20team2Score%3A%200%7D%29%20%7Bmatch%20%7Bgame%20date%20finished%20tournament%20team1Score%20team2Score%20teams%20%7Bname%20fromNation%20team%7D%7D%7D%7D][Update a match]]
+
+* Comments
+
+** GraphQL
+
+I used GraphQL for both the app API and the database API.
+The instructions called implementing GraphQL a "follow up",
+but my APIs provide only a GraphQL interface. While
+implementing another API is possible, doing so makes little
+sense, because it would require more work and not be as
+flexible as the GraphQL API anyway.
+
+Using GraphQL is a very good idea for the app API. It solves
+the problems of over-fetching and under-fetching data.
+Under-fetching means that a client needs to make more
+requests to get all the data it needs, and leads to the
+fetching taking more time (because of overhead and TCP
+congestion control). Over-fetching leads to more data usage
+(which can be important, especially for mobile users) and
+the fetching taking more time. If a more traditional REST
+API provides a fixed set of methods to request data, and
+these methods do not exactly fit the clients' needs, these
+problems will occur. And of course it is often the case that
+they don't exactly fit. And even if the API was designed
+carefully to match the clients' needs, which would probably
+take more time and effort, that leads to a brittle solution,
+because it creates tight coupling between the client and
+server. Such coupling means changing the API or the client
+without having to change the other is hard if the perfect
+fit is to be maintained. Adding a new type of client with
+other needs is also hard.
+
+More succinctly, not using GraphQL, or something like it,
+i.e. having a fixed API, creates tight coupling between the
+client and server and that creates several problems.
+
+In addition, GraphQL provides two other benefits. First, it
+provides subscriptions to allow clients to listen for real
+time updates from the server, which I imagine could be very
+useful for an API like this. Second, it provides a type
+system which can help catch problems.
+
+Assuming the database API, to update and create information
+in the database, is not going to be used nearly as much as
+the app API, using GraphQL for the database API is
+not nearly as important as for the app API. Not only that,
+but making a flexible API that primarily receives data is
+much easier than creating one that provides just the data
+the clients need. In the latter case, the client needs to
+tell the API exactly which data it wants, which is what
+GraphQL allows.
+
+I used GraphQL for the database API too because even if it's
+not as important for the database API it is still a good
+solution.
+
+** Architecture
+
+*** db_functions.py
+
+The code in =esportsapi/db_functions.py= is the only code
+that deals with the database (sqlite3) directly, and that
+"knows about" the database schema, and as such if the
+database schema or implementation would change, only
+=db_functions.py= would need modification. Or, of course, an
+entirely new version of =db_functions.py= could be made for
+another backend. The public functions in =db_functions.py=
+provide the interface for the other modules to interact with
+the database backend. In a language with interfaces (and
+features surrounding it, like a type system) I would
+definitely use an interface for the database functions.
+
+*** Database Schema
+
+The =tournament=, =teams=, and =games= tables all just
+contains a name column (besides the =id=) and might seem
+useless. But let's pretend that tournaments, teams and games
+all have more information associated with them. In this case
+they would need their own tables, and that's why I made it
+this way.
+
+The table =match_players= defines the "teams" of a match.
+These teams are just sets of players, and does not
+correspond to any team of the =teams= table. This is because
+not all players are in a team, and for example all-star
+matches with players from different teams do occur.
+
+If more information about players are needed, for example
+the race (Zerg, Protoss or Zerg) of StarCraft players, or
+the position of a player in a DOTA 2 team, an
+"entity-attribute-value" model could be implemented using
+additional tables.
+
+** Improvements
+
+Of course there are many improvements and additions that
+could be made to the code. Here are some that I have thought
+of. Of course, the reason I didn't implement these was lack
+of time.
+
++ More comprehensive tests.
++ Docstrings. Production quality code should of course be
+  documented.
++ The code in =esportsapi/graphql.py= (the class definitions) is
+  a bit repetitive, and could perhaps be made less so using
+  the =type= function.
++ I imagine that one would want some kind of authorization
+  to be able to create and update records in the database.
++ More queries and mutations could be added, for
+  example to update players, etc.
++ GraphQL subscriptions could be added, so that clients can
+  get updates in real time about matches and results.
+
+** git
+
+Obviously when I work I use git a lot. It can of course
+speed up even solo development, even if you never go back in
+the history, because you can get a clearer picture of what
+you have done since the last commit and can discard changes,
+etc. But I had never used GraphQL, Flask or sqlite3 before,
+so there was a lot of experimenting and therefore the
+commits were not pretty, and I didn't want to spend any time
+on making them pretty. That's why there is only one commit
+in the git repo.
+
+* GraphQL Schema
+
+Here is the GraphQL schema for the APIs. The app API does
+not allow mutations.
+
+#+BEGIN_SRC graphql
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+scalar Date
+
+scalar DateTime
+
+type Game {
+  id: Int!
+  name: String!
+}
+
+type Team {
+  id: Int!
+  name: String!
+}
+
+type Tournament {
+  id: Int!
+  name: String!
+}
+
+type Player {
+  id: ID!
+  name: String!
+  birthday: Date
+  fromNation: String
+  team: String
+  games: [String!]!
+}
+
+type Match {
+  id: ID!
+  date: DateTime!
+  game: String
+  finished: Boolean!
+  tournament: String
+  team1Score: Int
+  team2Score: Int
+  teams: [[Player!]!]
+}
+
+type Query {
+  matches(ids: [Int] = -1,
+          between: [Date] = -1,
+          onDate: Date = -1,
+          tournamentName: String = -1,
+          tournamentId: Int = -1):
+    [Match]
+  players(ids: [Int] = -1, names: [String] = -1): [Player]
+
+
+  type CreateGame {
+    game: Game
+  }}
+
+type CreateTeam {
+  team: Team
+}
+
+type CreateTournament {
+  tournament: Tournament
+}
+
+input PlayerInput {
+  name: String!
+  birthday: Date
+  fromNation: String
+  teamId: Int
+  gameIds: [Int!]!
+}
+
+type CreatePlayer {
+  player: Player
+}
+
+input MatchInput {
+  date: DateTime!
+  gameId: Int
+  finished: Boolean
+  tournamentId: Int
+  team1Score: Int
+  team2Score: Int
+  teams: [[Int!]!]
+}
+
+type CreateMatch {
+  match: Match
+}
+
+input UpdateMatchInput {
+  id: Int!
+  date: DateTime
+  gameId: Int
+  finished: Boolean
+  tournamentId: Int
+  team1Score: Int
+  team2Score: Int
+  teams: [[Int!]!]
+}
+
+type UpdateMatch {
+  match: Match
+}
+
+type Mutation {
+  createMatch(data: MatchInput!): CreateMatch
+  createPlayer(data: PlayerInput!): CreatePlayer
+  createTeam(name: String!): CreateTeam
+  createGame(name: String!): CreateGame
+  createTournament(name: String!): CreateTournament
+  updateMatch(data: UpdateMatchInput!): UpdateMatch
+}
+#+END_SRC
